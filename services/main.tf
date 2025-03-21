@@ -1,16 +1,10 @@
-# S3 Bucket
-resource "aws_s3_bucket" "stock_analysis" {
-  bucket = var.s3_bucket_name
-  force_destroy = true
-
-  tags = {
-    Name = var.s3_bucket_name
-  }
+provider "aws" {
+  region = var.aws_region
 }
 
 # IAM Role
 resource "aws_iam_role" "stock_analysis" {
-  name = var.iam_role_name
+  name = "StockAnalysisRole"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -21,48 +15,50 @@ resource "aws_iam_role" "stock_analysis" {
         Principal = {
           Service = [
             "ecs-tasks.amazonaws.com",
-            "lambda.amazonaws.com",
-            "sagemaker.amazonaws.com"
+            "lambda.amazonaws.com"
           ]
         }
       }
     ]
   })
-
-  tags = {
-    Name = var.iam_role_name
-  }
 }
 
-# IAM Policy for the role
-resource "aws_iam_policy" "stock_analysis" {
-  name        = "${var.iam_role_name}Policy"
-  description = "Policy for Stock Analysis system"
+# IAM Policies
+resource "aws_iam_role_policy_attachment" "lambda_vpc_access" {
+  role       = aws_iam_role.stock_analysis.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole"
+}
+
+resource "aws_iam_role_policy_attachment" "lambda_basic" {
+  role       = aws_iam_role.stock_analysis.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+}
+
+resource "aws_iam_role_policy" "stock_analysis" {
+  name = "StockAnalysisPolicy"
+  role = aws_iam_role.stock_analysis.id
 
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
       {
+        Effect = "Allow"
         Action = [
           "s3:*",
           "kinesis:*",
           "dynamodb:*",
-          "sagemaker:*",
-          "logs:*"
+          "logs:*",
+          "ec2:CreateNetworkInterface",
+          "ec2:DescribeNetworkInterfaces",
+          "ec2:DeleteNetworkInterface"
         ]
-        Effect   = "Allow"
         Resource = "*"
       }
     ]
   })
 }
 
-resource "aws_iam_role_policy_attachment" "stock_analysis" {
-  role       = aws_iam_role.stock_analysis.name
-  policy_arn = aws_iam_policy.stock_analysis.arn
-}
-
-# Kinesis Data Stream
+# Kinesis Stream
 resource "aws_kinesis_stream" "stock_stream" {
   name             = var.kinesis_stream_name
   shard_count      = 1
@@ -95,56 +91,21 @@ resource "aws_dynamodb_table" "stock_table" {
   }
 }
 
-# Lambda Function
-resource "aws_lambda_function" "stock_analysis" {
-  function_name = var.lambda_function_name
-  role          = aws_iam_role.stock_analysis.arn
-  handler       = "index.handler"
-  runtime       = "python3.9"
-  timeout       = 300
-  memory_size   = 512
-
-  filename         = "lambda_function.zip"
-  source_code_hash = filebase64sha256("lambda_function.zip")
-
-  environment {
-    variables = {
-      DYNAMO_TABLE = var.dynamo_table_name,
-      SAGEMAKER_ENDPOINT = "${var.sagemaker_model_name}-endpoint"
-    }
-  }
-
-  layers = [aws_lambda_layer_version.ta_lib.arn]
-
-  tags = {
-    Name = var.lambda_function_name
-  }
-}
-
-# Lambda Layer
-resource "aws_lambda_layer_version" "ta_lib" {
-  layer_name = "ta_lib_layer"
-  filename   = "ta_lib_layer.zip"
-  compatible_runtimes = ["python3.9"]
-}
-
-# Lambda Event Source Mapping
-resource "aws_lambda_event_source_mapping" "kinesis_mapping" {
-  event_source_arn  = aws_kinesis_stream.stock_stream.arn
-  function_name     = aws_lambda_function.stock_analysis.function_name
-  starting_position = "LATEST"
-  batch_size        = 100
-}
-
-# SageMaker resources would typically be created here but they require model artifacts
-# For this example, I'll create a placeholder for the SageMaker endpoint configuration
-
 # ECS Cluster
 resource "aws_ecs_cluster" "stock_analysis" {
   name = var.cluster_name
 
   tags = {
     Name = var.cluster_name
+  }
+}
+
+# ECR Repository
+resource "aws_ecr_repository" "stock_data_collector" {
+  name = var.service_name
+
+  tags = {
+    Name = var.service_name
   }
 }
 
@@ -156,7 +117,7 @@ resource "aws_ecs_task_definition" "stock_data_collector" {
   cpu                      = "256"
   memory                   = "512"
   execution_role_arn       = aws_iam_role.stock_analysis.arn
-  task_role_arn            = aws_iam_role.stock_analysis.arn
+  task_role_arn           = aws_iam_role.stock_analysis.arn
 
   container_definitions = jsonencode([
     {
@@ -179,19 +140,6 @@ resource "aws_ecs_task_definition" "stock_data_collector" {
       }
     }
   ])
-
-  tags = {
-    Name = var.task_family
-  }
-}
-
-# ECR Repository
-resource "aws_ecr_repository" "stock_data_collector" {
-  name = var.service_name
-
-  tags = {
-    Name = var.service_name
-  }
 }
 
 # ECS Service
@@ -203,22 +151,48 @@ resource "aws_ecs_service" "stock_data_collector" {
   launch_type     = "FARGATE"
 
   network_configuration {
-    subnets          = var.private_subnet_ids
+    subnets          = [var.public_subnet_id]
     security_groups  = [var.ecs_security_group_id]
-    assign_public_ip = false
-  }
-
-  tags = {
-    Name = var.service_name
+    assign_public_ip = true
   }
 }
 
 # CloudWatch Log Group
 resource "aws_cloudwatch_log_group" "ecs_logs" {
-  name = "/ecs/${var.service_name}"
+  name              = "/ecs/${var.service_name}"
   retention_in_days = 30
 
   tags = {
     Name = "/ecs/${var.service_name}"
   }
+}
+
+# Lambda Function
+resource "aws_lambda_function" "stock_analysis" {
+  filename         = "lambda_function.zip"
+  function_name    = var.lambda_function_name
+  role            = aws_iam_role.stock_analysis.arn
+  handler         = "index.handler"
+  runtime         = "python3.9"
+  timeout         = 300
+  memory_size     = 512
+
+  environment {
+    variables = {
+      DYNAMO_TABLE = var.dynamo_table_name
+    }
+  }
+
+  vpc_config {
+    subnet_ids         = [var.public_subnet_id]
+    security_group_ids = [var.ecs_security_group_id]
+  }
+}
+
+# Lambda Event Source Mapping
+resource "aws_lambda_event_source_mapping" "kinesis_trigger" {
+  event_source_arn  = aws_kinesis_stream.stock_stream.arn
+  function_name     = aws_lambda_function.stock_analysis.arn
+  starting_position = "LATEST"
+  batch_size        = 100
 }

@@ -5,13 +5,10 @@ terraform {
       version = "~> 4.0"
     }
   }
+  
   backend "s3" {
     bucket = "kevinw-p2"
     key    = "terraform/services/state"
     region = "us-east-1"
   }
-}
-
-provider "aws" {
-  region = var.aws_region
 }
