@@ -1,0 +1,8 @@
+aws_region           = "us-east-1"
+kinesis_stream_name  = "stock-stream"
+dynamo_table_name    = "stock-table"
+cluster_name         = "stock-analysis-cluster"
+service_name         = "stock-data-collector"
+task_family          = "stock-data-collector-task"
+lambda_function_name = "StockAnalysisLambda"
+sagemaker_model_name = "tsla-stock-predictor"

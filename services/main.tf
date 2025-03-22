@@ -2,6 +2,15 @@ provider "aws" {
   region = var.aws_region
 }
 
+data "terraform_remote_state" "network" {
+  backend = "s3"
+  config = {
+    bucket = "kevinw-p2"
+    key    = "terraform/network/state"
+    region = "us-east-1"
+  }
+}
+
 # IAM Role
 resource "aws_iam_role" "stock_analysis" {
   name = "StockAnalysisRole"
@@ -15,7 +24,8 @@ resource "aws_iam_role" "stock_analysis" {
         Principal = {
           Service = [
             "ecs-tasks.amazonaws.com",
-            "lambda.amazonaws.com"
+            "lambda.amazonaws.com",
+            "sagemaker.amazonaws.com"
           ]
         }
       }
@@ -34,6 +44,92 @@ resource "aws_iam_role_policy_attachment" "lambda_basic" {
   policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
 }
 
+resource "aws_iam_policy" "sagemaker_access_policy" {
+  name        = "SageMakerAccessPolicy"
+  description = "Policy for SageMaker operations"
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "sagemaker:CreateTrainingJob",
+          "sagemaker:DescribeTrainingJob",
+          "sagemaker:CreateModel",
+          "sagemaker:CreateEndpointConfig",
+          "sagemaker:CreateEndpoint",
+          "sagemaker:DescribeEndpoint",
+          "sagemaker:InvokeEndpoint"
+        ]
+        Resource = "*"
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "sagemaker:List*",
+          "sagemaker:Get*"
+        ]
+        Resource = "*"
+      },
+      {
+        Effect = "Allow"
+        Action = "iam:PassRole"
+        Resource = "arn:aws:iam::039444453392:role/StockAnalysisRole"
+      }
+    ]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "sagemaker_policy" {
+  role       = aws_iam_role.stock_analysis.name
+  policy_arn = aws_iam_policy.sagemaker_access_policy.arn
+}
+
+resource "aws_iam_policy" "s3_access_policy" {
+  name        = "S3AccessPolicy"
+  description = "Policy for accessing specific S3 buckets"
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "s3:GetObject",
+          "s3:PutObject",
+          "s3:ListBucket"
+        ]
+        Resource = [
+          "arn:aws:s3:::kevinw-p2",
+          "arn:aws:s3:::kevinw-p2/*"
+        ]
+      }
+    ]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "s3_policy" {
+  role       = aws_iam_role.stock_analysis.name
+  policy_arn = aws_iam_policy.s3_access_policy.arn
+}
+
+resource "aws_iam_role_policy_attachment" "cloudwatch_policy" {
+  role       = aws_iam_role.stock_analysis.name
+  policy_arn = "arn:aws:iam::aws:policy/CloudWatchLogsFullAccess"
+}
+
+resource "aws_iam_role_policy_attachment" "kinesis_policy" {
+  role       = aws_iam_role.stock_analysis.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonKinesisFullAccess"
+}
+
+# 添加 ECR 权限
+resource "aws_iam_role_policy_attachment" "ecr_readonly_policy" {
+  role       = aws_iam_role.stock_analysis.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly"
+}
+
 resource "aws_iam_role_policy" "stock_analysis" {
   name = "StockAnalysisPolicy"
   role = aws_iam_role.stock_analysis.id
@@ -44,10 +140,8 @@ resource "aws_iam_role_policy" "stock_analysis" {
       {
         Effect = "Allow"
         Action = [
-          "s3:*",
           "kinesis:*",
           "dynamodb:*",
-          "logs:*",
           "ec2:CreateNetworkInterface",
           "ec2:DescribeNetworkInterfaces",
           "ec2:DeleteNetworkInterface"
@@ -109,15 +203,77 @@ resource "aws_ecr_repository" "stock_data_collector" {
   }
 }
 
+# ECR Lifecycle Policy
+resource "aws_ecr_lifecycle_policy" "stock_data_collector_lifecycle" {
+  repository = aws_ecr_repository.stock_data_collector.name
+
+  policy = <<EOF
+{
+  "rules": [
+    {
+      "rulePriority": 1,
+      "description": "Expire images older than 30 days",
+      "selection": {
+        "tagStatus": "any",
+        "countType": "sinceImagePushed",
+        "countUnit": "days",
+        "countNumber": 30
+      },
+      "action": {
+        "type": "expire"
+      }
+    }
+  ]
+}
+EOF
+}
+
+# 下载 push_to_kinesis.py 从 S3
+resource "null_resource" "download_push_to_kinesis" {
+  provisioner "local-exec" {
+    command = "aws s3 cp s3://kevinw-p2/code/push_to_kinesis.py ./push_to_kinesis.py"
+  }
+}
+
+# 创建 Dockerfile
+resource "local_file" "dockerfile" {
+  content = <<EOF
+FROM python:3.9-slim
+WORKDIR /app
+COPY push_to_kinesis.py .
+RUN pip install boto3
+CMD ["python", "push_to_kinesis.py"]
+EOF
+  filename = "Dockerfile"
+}
+
+# 构建并推送 Docker 镜像
+resource "null_resource" "build_and_push_image" {
+  provisioner "local-exec" {
+    command = <<EOT
+      aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin 039444453392.dkr.ecr.us-east-1.amazonaws.com
+      docker build -t stock-data-collector .
+      docker tag stock-data-collector:latest 039444453392.dkr.ecr.us-east-1.amazonaws.com/stock-data-collector:latest
+      docker push 039444453392.dkr.ecr.us-east-1.amazonaws.com/stock-data-collector:latest
+    EOT
+  }
+
+  depends_on = [
+    aws_ecr_repository.stock_data_collector,
+    null_resource.download_push_to_kinesis,
+    local_file.dockerfile
+  ]
+}
+
 # ECS Task Definition
 resource "aws_ecs_task_definition" "stock_data_collector" {
   family                   = var.task_family
   network_mode             = "awsvpc"
   requires_compatibilities = ["FARGATE"]
-  cpu                      = "256"
-  memory                   = "512"
+  cpu                      = "512"
+  memory                   = "1024"
   execution_role_arn       = aws_iam_role.stock_analysis.arn
-  task_role_arn           = aws_iam_role.stock_analysis.arn
+  task_role_arn            = aws_iam_role.stock_analysis.arn
 
   container_definitions = jsonencode([
     {
@@ -128,6 +284,10 @@ resource "aws_ecs_task_definition" "stock_data_collector" {
         {
           name  = "KINESIS_STREAM_NAME"
           value = var.kinesis_stream_name
+        },
+        {
+          name  = "AWS_DEFAULT_REGION"
+          value = "us-east-1"
         }
       ]
       logConfiguration = {
@@ -140,6 +300,8 @@ resource "aws_ecs_task_definition" "stock_data_collector" {
       }
     }
   ])
+
+  depends_on = [null_resource.build_and_push_image]
 }
 
 # ECS Service
@@ -151,8 +313,8 @@ resource "aws_ecs_service" "stock_data_collector" {
   launch_type     = "FARGATE"
 
   network_configuration {
-    subnets          = [var.public_subnet_id]
-    security_groups  = [var.ecs_security_group_id]
+    subnets          = [data.terraform_remote_state.network.outputs.public_subnet_id]
+    security_groups  = [data.terraform_remote_state.network.outputs.ecs_security_group_id]
     assign_public_ip = true
   }
 }
@@ -167,26 +329,123 @@ resource "aws_cloudwatch_log_group" "ecs_logs" {
   }
 }
 
-# Lambda Function
-resource "aws_lambda_function" "stock_analysis" {
-  filename         = "lambda_function.zip"
-  function_name    = var.lambda_function_name
-  role            = aws_iam_role.stock_analysis.arn
-  handler         = "index.handler"
-  runtime         = "python3.9"
-  timeout         = 300
-  memory_size     = 512
+# Lambda 函数：触发 SageMaker 训练作业
+resource "aws_lambda_function" "trigger_training_job" {
+  function_name = "TriggerSageMakerTrainingJob"
+  role          = aws_iam_role.stock_analysis.arn
+  handler       = "trigger_training_job.lambda_handler"
+  runtime       = "python3.9"
+  timeout       = 60
 
-  environment {
-    variables = {
-      DYNAMO_TABLE = var.dynamo_table_name
+  s3_bucket = "kevinw-p2"
+  s3_key    = "trigger_training_job.zip"
+
+  tags = {
+    Name = "TriggerSageMakerTrainingJob"
+  }
+}
+
+# 触发 Lambda 函数
+resource "null_resource" "invoke_training_job_lambda" {
+  provisioner "local-exec" {
+    command = <<EOT
+      aws lambda invoke \
+        --function-name TriggerSageMakerTrainingJob \
+        --region us-east-1 \
+        --payload '{}' \
+        response.json
+      cat response.json | jq -r '.body' | jq -r '.training_job_name' > training_job_name.txt
+    EOT
+  }
+
+  depends_on = [aws_lambda_function.trigger_training_job]
+}
+
+# 等待训练作业完成
+resource "null_resource" "wait_for_training_job" {
+  provisioner "local-exec" {
+    command = <<EOT
+      TRAINING_JOB_NAME=$(cat training_job_name.txt)
+      if [ -z "$TRAINING_JOB_NAME" ]; then
+        echo "Error: Training job name is empty"
+        exit 1
+      fi
+      aws sagemaker wait training-job-completed-or-stopped \
+        --training-job-name $TRAINING_JOB_NAME \
+        --region us-east-1
+    EOT
+  }
+
+  depends_on = [null_resource.invoke_training_job_lambda]
+}
+
+# SageMaker 模型
+resource "aws_sagemaker_model" "model" {
+  name               = var.sagemaker_model_name
+  execution_role_arn = "arn:aws:iam::039444453392:role/StockAnalysisRole"
+
+  primary_container {
+    image          = "683313688378.dkr.ecr.us-east-1.amazonaws.com/sagemaker-scikit-learn:1.0-1-cpu-py3"
+    model_data_url = "s3://kevinw-p2/output/model.tar.gz"
+    environment = {
+      SAGEMAKER_PROGRAM = "inference.py"
     }
   }
 
-  vpc_config {
-    subnet_ids         = [var.public_subnet_id]
-    security_group_ids = [var.ecs_security_group_id]
+  depends_on = [null_resource.wait_for_training_job]
+}
+
+# SageMaker 端点配置
+resource "aws_sagemaker_endpoint_configuration" "endpoint_config" {
+  name = "${var.sagemaker_model_name}-config"
+
+  production_variants {
+    variant_name           = "AllTraffic"
+    model_name             = aws_sagemaker_model.model.name
+    initial_instance_count = 1
+    instance_type          = "ml.m5.large"
   }
+}
+
+# SageMaker 端点
+resource "aws_sagemaker_endpoint" "endpoint" {
+  name                 = "${var.sagemaker_model_name}-endpoint"
+  endpoint_config_name = aws_sagemaker_endpoint_configuration.endpoint_config.name
+}
+
+# Lambda Function（用于 Kinesis 触发）
+resource "aws_lambda_function" "stock_analysis" {
+  function_name = var.lambda_function_name
+  role          = aws_iam_role.stock_analysis.arn
+  handler       = "index.handler"
+  runtime       = "python3.9"
+  timeout       = 300
+  memory_size   = 512
+
+  s3_bucket = "kevinw-p2"
+  s3_key    = "lambda_function.zip"
+
+  environment {
+    variables = {
+      DYNAMO_TABLE       = var.dynamo_table_name
+      SAGEMAKER_ENDPOINT = "${var.sagemaker_model_name}-endpoint"
+    }
+  }
+
+  layers = [aws_lambda_layer_version.ta_lib.arn]
+
+  tags = {
+    Name = var.lambda_function_name
+  }
+}
+
+# Lambda Layer
+resource "aws_lambda_layer_version" "ta_lib" {
+  layer_name = "ta_lib_layer"
+  compatible_runtimes = ["python3.9"]
+
+  s3_bucket = "kevinw-p2"
+  s3_key    = "ta_lib_layer.zip"
 }
 
 # Lambda Event Source Mapping

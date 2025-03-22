@@ -1,22 +1,19 @@
 variable "aws_region" {
-  description = "AWS region to deploy resources"
+  description = "AWS region"
   type        = string
   default     = "us-east-1"
 }
 
-variable "vpc_id" {
-  description = "ID of the VPC"
+variable "kinesis_stream_name" {
+  description = "Name of the Kinesis stream"
   type        = string
+  default     = "stock-stream"
 }
 
-variable "public_subnet_id" {
-  description = "ID of the public subnet"
+variable "dynamo_table_name" {
+  description = "Name of the DynamoDB table"
   type        = string
-}
-
-variable "ecs_security_group_id" {
-  description = "ID of the ECS security group"
-  type        = string
+  default     = "stock-table"
 }
 
 variable "cluster_name" {
@@ -32,25 +29,19 @@ variable "service_name" {
 }
 
 variable "task_family" {
-  description = "Family name for the ECS task"
+  description = "Family name of the ECS task definition"
   type        = string
-  default     = "stock-data-collector"
-}
-
-variable "kinesis_stream_name" {
-  description = "Name of the Kinesis data stream"
-  type        = string
-  default     = "stock-stream"
-}
-
-variable "dynamo_table_name" {
-  description = "Name of the DynamoDB table"
-  type        = string
-  default     = "stock-table"
+  default     = "stock-data-collector-task"
 }
 
 variable "lambda_function_name" {
   description = "Name of the Lambda function"
   type        = string
   default     = "StockAnalysisLambda"
+}
+
+variable "sagemaker_model_name" {
+  description = "Name of the SageMaker model"
+  type        = string
+  default     = "tsla-stock-predictor"
 }
