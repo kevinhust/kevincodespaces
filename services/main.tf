@@ -23,7 +23,6 @@ resource "aws_iam_role" "stock_analysis" {
         Effect = "Allow"
         Principal = {
           Service = [
-            "ecs-tasks.amazonaws.com",
             "lambda.amazonaws.com",
             "sagemaker.amazonaws.com"
           ]
@@ -44,92 +43,6 @@ resource "aws_iam_role_policy_attachment" "lambda_basic" {
   policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
 }
 
-resource "aws_iam_policy" "sagemaker_access_policy" {
-  name        = "SageMakerAccessPolicy"
-  description = "Policy for SageMaker operations"
-
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Effect = "Allow"
-        Action = [
-          "sagemaker:CreateTrainingJob",
-          "sagemaker:DescribeTrainingJob",
-          "sagemaker:CreateModel",
-          "sagemaker:CreateEndpointConfig",
-          "sagemaker:CreateEndpoint",
-          "sagemaker:DescribeEndpoint",
-          "sagemaker:InvokeEndpoint"
-        ]
-        Resource = "*"
-      },
-      {
-        Effect = "Allow"
-        Action = [
-          "sagemaker:List*",
-          "sagemaker:Get*"
-        ]
-        Resource = "*"
-      },
-      {
-        Effect = "Allow"
-        Action = "iam:PassRole"
-        Resource = "arn:aws:iam::039444453392:role/StockAnalysisRole"
-      }
-    ]
-  })
-}
-
-resource "aws_iam_role_policy_attachment" "sagemaker_policy" {
-  role       = aws_iam_role.stock_analysis.name
-  policy_arn = aws_iam_policy.sagemaker_access_policy.arn
-}
-
-resource "aws_iam_policy" "s3_access_policy" {
-  name        = "S3AccessPolicy"
-  description = "Policy for accessing specific S3 buckets"
-
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Effect = "Allow"
-        Action = [
-          "s3:GetObject",
-          "s3:PutObject",
-          "s3:ListBucket"
-        ]
-        Resource = [
-          "arn:aws:s3:::kevinw-p2",
-          "arn:aws:s3:::kevinw-p2/*"
-        ]
-      }
-    ]
-  })
-}
-
-resource "aws_iam_role_policy_attachment" "s3_policy" {
-  role       = aws_iam_role.stock_analysis.name
-  policy_arn = aws_iam_policy.s3_access_policy.arn
-}
-
-resource "aws_iam_role_policy_attachment" "cloudwatch_policy" {
-  role       = aws_iam_role.stock_analysis.name
-  policy_arn = "arn:aws:iam::aws:policy/CloudWatchLogsFullAccess"
-}
-
-resource "aws_iam_role_policy_attachment" "kinesis_policy" {
-  role       = aws_iam_role.stock_analysis.name
-  policy_arn = "arn:aws:iam::aws:policy/AmazonKinesisFullAccess"
-}
-
-# 添加 ECR 权限
-resource "aws_iam_role_policy_attachment" "ecr_readonly_policy" {
-  role       = aws_iam_role.stock_analysis.name
-  policy_arn = "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly"
-}
-
 resource "aws_iam_role_policy" "stock_analysis" {
   name = "StockAnalysisPolicy"
   role = aws_iam_role.stock_analysis.id
@@ -140,16 +53,69 @@ resource "aws_iam_role_policy" "stock_analysis" {
       {
         Effect = "Allow"
         Action = [
+          "s3:*",
           "kinesis:*",
           "dynamodb:*",
+          "logs:*",
           "ec2:CreateNetworkInterface",
           "ec2:DescribeNetworkInterfaces",
-          "ec2:DeleteNetworkInterface"
+          "ec2:DeleteNetworkInterface",
+          "sagemaker:*"
         ]
         Resource = "*"
       }
     ]
   })
+}
+
+# S3 Bucket
+resource "aws_s3_bucket" "stock_bucket" {
+  bucket = var.bucket_name
+}
+
+# 上传 SageMaker 脚本
+resource "aws_s3_object" "code_inference" {
+  bucket = aws_s3_bucket.stock_bucket.bucket
+  key    = "code/inference.py"
+  source = "path/to/inference.py"
+}
+
+resource "aws_s3_object" "code_train" {
+  bucket = aws_s3_bucket.stock_bucket.bucket
+  key    = "code/train.py"
+  source = "path/to/train.py"
+}
+
+resource "aws_s3_object" "code_requirements" {
+  bucket = aws_s3_bucket.stock_bucket.bucket
+  key    = "code/requirements.txt"
+  source = "path/to/code_requirements.txt"
+}
+
+# 上传历史数据
+resource "aws_s3_object" "data_tsla" {
+  bucket = aws_s3_bucket.stock_bucket.bucket
+  key    = "data/tsla_history.csv"
+  source = "path/to/tsla_history.csv"
+}
+
+# 上传 Lambda 部署包
+resource "aws_s3_object" "push_to_kinesis_zip" {
+  bucket = aws_s3_bucket.stock_bucket.bucket
+  key    = "lambda/push_to_kinesis/push_to_kinesis.zip"
+  source = "path/to/push_to_kinesis.zip"
+}
+
+resource "aws_s3_object" "process_stock_data_zip" {
+  bucket = aws_s3_bucket.stock_bucket.bucket
+  key    = "lambda/process_stock_data/process_stock_data.zip"
+  source = "path/to/process_stock_data.zip"
+}
+
+resource "aws_s3_object" "trigger_training_job_zip" {
+  bucket = aws_s3_bucket.stock_bucket.bucket
+  key    = "lambda/trigger_training_job/trigger_training_job.zip"
+  source = "path/to/trigger_training_job.zip"
 }
 
 # Kinesis Stream
@@ -177,7 +143,7 @@ resource "aws_dynamodb_table" "stock_table" {
 
   attribute {
     name = "timestamp"
-    type = "N"
+    type = "S"  # 改为字符串类型，与代码中的 timestamp 格式一致
   }
 
   tags = {
@@ -185,273 +151,161 @@ resource "aws_dynamodb_table" "stock_table" {
   }
 }
 
-# ECS Cluster
-resource "aws_ecs_cluster" "stock_analysis" {
-  name = var.cluster_name
-
-  tags = {
-    Name = var.cluster_name
-  }
-}
-
-# ECR Repository
-resource "aws_ecr_repository" "stock_data_collector" {
-  name = var.service_name
-
-  tags = {
-    Name = var.service_name
-  }
-}
-
-# ECR Lifecycle Policy
-resource "aws_ecr_lifecycle_policy" "stock_data_collector_lifecycle" {
-  repository = aws_ecr_repository.stock_data_collector.name
-
-  policy = <<EOF
-{
-  "rules": [
-    {
-      "rulePriority": 1,
-      "description": "Expire images older than 30 days",
-      "selection": {
-        "tagStatus": "any",
-        "countType": "sinceImagePushed",
-        "countUnit": "days",
-        "countNumber": 30
-      },
-      "action": {
-        "type": "expire"
-      }
-    }
-  ]
-}
-EOF
-}
-
-# 下载 push_to_kinesis.py 从 S3
-resource "null_resource" "download_push_to_kinesis" {
-  provisioner "local-exec" {
-    command = "aws s3 cp s3://kevinw-p2/code/push_to_kinesis.py ./push_to_kinesis.py"
-  }
-}
-
-# 创建 Dockerfile
-resource "local_file" "dockerfile" {
-  content = <<EOF
-FROM python:3.9-slim
-WORKDIR /app
-COPY push_to_kinesis.py .
-RUN pip install boto3
-CMD ["python", "push_to_kinesis.py"]
-EOF
-  filename = "Dockerfile"
-}
-
-# 构建并推送 Docker 镜像
-resource "null_resource" "build_and_push_image" {
-  provisioner "local-exec" {
-    command = <<EOT
-      aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin 039444453392.dkr.ecr.us-east-1.amazonaws.com
-      docker build -t stock-data-collector .
-      docker tag stock-data-collector:latest 039444453392.dkr.ecr.us-east-1.amazonaws.com/stock-data-collector:latest
-      docker push 039444453392.dkr.ecr.us-east-1.amazonaws.com/stock-data-collector:latest
-    EOT
-  }
-
-  depends_on = [
-    aws_ecr_repository.stock_data_collector,
-    null_resource.download_push_to_kinesis,
-    local_file.dockerfile
-  ]
-}
-
-# ECS Task Definition
-resource "aws_ecs_task_definition" "stock_data_collector" {
-  family                   = var.task_family
-  network_mode             = "awsvpc"
-  requires_compatibilities = ["FARGATE"]
-  cpu                      = "512"
-  memory                   = "1024"
-  execution_role_arn       = aws_iam_role.stock_analysis.arn
-  task_role_arn            = aws_iam_role.stock_analysis.arn
-
-  container_definitions = jsonencode([
-    {
-      name      = var.service_name
-      image     = "${aws_ecr_repository.stock_data_collector.repository_url}:latest"
-      essential = true
-      environment = [
-        {
-          name  = "KINESIS_STREAM_NAME"
-          value = var.kinesis_stream_name
-        },
-        {
-          name  = "AWS_DEFAULT_REGION"
-          value = "us-east-1"
-        }
-      ]
-      logConfiguration = {
-        logDriver = "awslogs"
-        options = {
-          awslogs-group         = "/ecs/${var.service_name}"
-          awslogs-region        = var.aws_region
-          awslogs-stream-prefix = "ecs"
-        }
-      }
-    }
-  ])
-
-  depends_on = [null_resource.build_and_push_image]
-}
-
-# ECS Service
-resource "aws_ecs_service" "stock_data_collector" {
-  name            = var.service_name
-  cluster         = aws_ecs_cluster.stock_analysis.id
-  task_definition = aws_ecs_task_definition.stock_data_collector.arn
-  desired_count   = 1
-  launch_type     = "FARGATE"
-
-  network_configuration {
-    subnets          = [data.terraform_remote_state.network.outputs.public_subnet_id]
-    security_groups  = [data.terraform_remote_state.network.outputs.ecs_security_group_id]
-    assign_public_ip = true
-  }
-}
-
-# CloudWatch Log Group
-resource "aws_cloudwatch_log_group" "ecs_logs" {
-  name              = "/ecs/${var.service_name}"
-  retention_in_days = 30
-
-  tags = {
-    Name = "/ecs/${var.service_name}"
-  }
-}
-
-# Lambda 函数：触发 SageMaker 训练作业
-resource "aws_lambda_function" "trigger_training_job" {
-  function_name = "TriggerSageMakerTrainingJob"
-  role          = aws_iam_role.stock_analysis.arn
-  handler       = "trigger_training_job.lambda_handler"
+# push-to-kinesis Lambda
+resource "aws_lambda_function" "push_to_kinesis" {
+  function_name = var.push_to_kinesis_lambda_name
+  s3_bucket     = var.bucket_name
+  s3_key        = "lambda/push_to_kinesis/push_to_kinesis.zip"
+  handler       = "lambda_function.lambda_handler"
   runtime       = "python3.9"
-  timeout       = 60
-
-  s3_bucket = "kevinw-p2"
-  s3_key    = "trigger_training_job.zip"
-
-  tags = {
-    Name = "TriggerSageMakerTrainingJob"
-  }
-}
-
-# 触发 Lambda 函数
-resource "null_resource" "invoke_training_job_lambda" {
-  provisioner "local-exec" {
-    command = <<EOT
-      aws lambda invoke \
-        --function-name TriggerSageMakerTrainingJob \
-        --region us-east-1 \
-        --payload '{}' \
-        response.json
-      cat response.json | jq -r '.body' | jq -r '.training_job_name' > training_job_name.txt
-    EOT
-  }
-
-  depends_on = [aws_lambda_function.trigger_training_job]
-}
-
-# 等待训练作业完成
-resource "null_resource" "wait_for_training_job" {
-  provisioner "local-exec" {
-    command = <<EOT
-      TRAINING_JOB_NAME=$(cat training_job_name.txt)
-      if [ -z "$TRAINING_JOB_NAME" ]; then
-        echo "Error: Training job name is empty"
-        exit 1
-      fi
-      aws sagemaker wait training-job-completed-or-stopped \
-        --training-job-name $TRAINING_JOB_NAME \
-        --region us-east-1
-    EOT
-  }
-
-  depends_on = [null_resource.invoke_training_job_lambda]
-}
-
-# SageMaker 模型
-resource "aws_sagemaker_model" "model" {
-  name               = var.sagemaker_model_name
-  execution_role_arn = "arn:aws:iam::039444453392:role/StockAnalysisRole"
-
-  primary_container {
-    image          = "683313688378.dkr.ecr.us-east-1.amazonaws.com/sagemaker-scikit-learn:1.0-1-cpu-py3"
-    model_data_url = "s3://kevinw-p2/output/model.tar.gz"
-    environment = {
-      SAGEMAKER_PROGRAM = "inference.py"
-    }
-  }
-
-  depends_on = [null_resource.wait_for_training_job]
-}
-
-# SageMaker 端点配置
-resource "aws_sagemaker_endpoint_configuration" "endpoint_config" {
-  name = "${var.sagemaker_model_name}-config"
-
-  production_variants {
-    variant_name           = "AllTraffic"
-    model_name             = aws_sagemaker_model.model.name
-    initial_instance_count = 1
-    instance_type          = "ml.m5.large"
-  }
-}
-
-# SageMaker 端点
-resource "aws_sagemaker_endpoint" "endpoint" {
-  name                 = "${var.sagemaker_model_name}-endpoint"
-  endpoint_config_name = aws_sagemaker_endpoint_configuration.endpoint_config.name
-}
-
-# Lambda Function（用于 Kinesis 触发）
-resource "aws_lambda_function" "stock_analysis" {
-  function_name = var.lambda_function_name
   role          = aws_iam_role.stock_analysis.arn
-  handler       = "index.handler"
-  runtime       = "python3.9"
-  timeout       = 300
-  memory_size   = 512
-
-  s3_bucket = "kevinw-p2"
-  s3_key    = "lambda_function.zip"
+  timeout       = 30
 
   environment {
     variables = {
-      DYNAMO_TABLE       = var.dynamo_table_name
-      SAGEMAKER_ENDPOINT = "${var.sagemaker_model_name}-endpoint"
+      TICKER_SYMBOL       = var.ticker_symbol
+      KINESIS_STREAM_NAME = var.kinesis_stream_name
     }
   }
 
-  layers = [aws_lambda_layer_version.ta_lib.arn]
+  vpc_config {
+    subnet_ids         = [data.terraform_remote_state.network.outputs.private_subnet_id]
+    security_group_ids = [data.terraform_remote_state.network.outputs.lambda_security_group_id]
+  }
 
   tags = {
-    Name = var.lambda_function_name
+    Name = var.push_to_kinesis_lambda_name
   }
 }
 
-# Lambda Layer
-resource "aws_lambda_layer_version" "ta_lib" {
-  layer_name = "ta_lib_layer"
-  compatible_runtimes = ["python3.9"]
-
-  s3_bucket = "kevinw-p2"
-  s3_key    = "ta_lib_layer.zip"
+# CloudWatch Events 触发 push-to-kinesis
+resource "aws_cloudwatch_event_rule" "trigger_push_to_kinesis" {
+  name                = "trigger-push-to-kinesis"
+  description         = "Trigger Lambda every 10 seconds"
+  schedule_expression = "rate(10 seconds)"
 }
 
-# Lambda Event Source Mapping
+resource "aws_cloudwatch_event_target" "push_to_kinesis_target" {
+  rule      = aws_cloudwatch_event_rule.trigger_push_to_kinesis.name
+  target_id = "push-to-kinesis"
+  arn       = aws_lambda_function.push_to_kinesis.arn
+}
+
+resource "aws_lambda_permission" "allow_cloudwatch_to_invoke_push" {
+  statement_id  = "AllowExecutionFromCloudWatch"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.push_to_kinesis.function_name
+  principal     = "events.amazonaws.com"
+  source_arn    = aws_cloudwatch_event_rule.trigger_push_to_kinesis.arn
+}
+
+# process-stock-data Lambda
+resource "aws_lambda_function" "process_stock_data" {
+  function_name = var.process_stock_data_lambda_name
+  s3_bucket     = var.bucket_name
+  s3_key        = "lambda/process_stock_data/process_stock_data.zip"
+  handler       = "lambda_function.lambda_handler"
+  runtime       = "python3.9"
+  role          = aws_iam_role.stock_analysis.arn
+  timeout       = 30
+  memory_size   = 512
+
+  environment {
+    variables = {
+      DYNAMODB_TABLE_NAME   = var.dynamo_table_name
+      SAGEMAKER_ENDPOINT_NAME = var.sagemaker_endpoint_name
+    }
+  }
+
+  vpc_config {
+    subnet_ids         = [data.terraform_remote_state.network.outputs.private_subnet_id]
+    security_group_ids = [data.terraform_remote_state.network.outputs.lambda_security_group_id]
+  }
+
+  tags = {
+    Name = var.process_stock_data_lambda_name
+  }
+}
+
+# Kinesis 触发 process-stock-data
 resource "aws_lambda_event_source_mapping" "kinesis_trigger" {
-  event_source_arn  = aws_kinesis_stream.stock_stream.arn
-  function_name     = aws_lambda_function.stock_analysis.arn
+  event_source_arn = aws_kinesis_stream.stock_stream.arn
+  function_name    = aws_lambda_function.process_stock_data.arn
   starting_position = "LATEST"
-  batch_size        = 100
+}
+
+# trigger-training-job Lambda
+resource "aws_lambda_function" "trigger_training_job" {
+  function_name = var.trigger_training_job_lambda_name
+  s3_bucket     = var.bucket_name
+  s3_key        = "lambda/trigger_training_job/trigger_training_job.zip"
+  handler       = "lambda_function.lambda_handler"
+  runtime       = "python3.9"
+  role          = aws_iam_role.stock_analysis.arn
+  timeout       = 30
+
+  environment {
+    variables = {
+      SAGEMAKER_ROLE_ARN = aws_iam_role.stock_analysis.arn
+    }
+  }
+
+  vpc_config {
+    subnet_ids         = [data.terraform_remote_state.network.outputs.private_subnet_id]
+    security_group_ids = [data.terraform_remote_state.network.outputs.lambda_security_group_id]
+  }
+
+  tags = {
+    Name = var.trigger_training_job_lambda_name
+  }
+}
+
+# EventBridge 触发 trigger-training-job
+resource "aws_cloudwatch_event_rule" "trigger_training_job" {
+  name                = "trigger-training-job"
+  description         = "Trigger Lambda every 3 days"
+  schedule_expression = "cron(0 0 */3 * ? *)"
+}
+
+resource "aws_cloudwatch_event_target" "trigger_training_job_target" {
+  rule      = aws_cloudwatch_event_rule.trigger_training_job.name
+  target_id = "trigger-training-job"
+  arn       = aws_lambda_function.trigger_training_job.arn
+}
+
+resource "aws_lambda_permission" "allow_eventbridge_to_invoke_trigger" {
+  statement_id  = "AllowExecutionFromEventBridge"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.trigger_training_job.function_name
+  principal     = "events.amazonaws.com"
+  source_arn    = aws_cloudwatch_event_rule.trigger_training_job.arn
+}
+
+# SageMaker Model
+resource "aws_sagemaker_model" "stock_prediction_model" {
+  name               = var.sagemaker_model_name
+  execution_role_arn = aws_iam_role.stock_analysis.arn
+
+  primary_container {
+    image = "811284229777.dkr.ecr.us-east-1.amazonaws.com/xgboost:latest"
+    model_data_url = "s3://${var.bucket_name}/output/model-2025-03-22.tar.gz"
+  }
+}
+
+# SageMaker Endpoint Configuration
+resource "aws_sagemaker_endpoint_configuration" "stock_prediction_config" {
+  name = "${var.sagemaker_model_name}-endpoint-config"
+
+  production_variants {
+    variant_name           = "variant-1"
+    model_name             = aws_sagemaker_model.stock_prediction_model.name
+    initial_instance_count = 1
+    instance_type          = "ml.t2.medium"
+  }
+}
+
+# SageMaker Endpoint
+resource "aws_sagemaker_endpoint" "stock_prediction" {
+  name                 = var.sagemaker_endpoint_name
+  endpoint_config_name = aws_sagemaker_endpoint_configuration.stock_prediction_config.name
 }
