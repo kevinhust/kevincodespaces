@@ -1,5 +1,0 @@
-project_name = "stock-analysis"
-vpc_cidr = "10.0.0.0/16"
-public_subnet_cidr = "10.0.1.0/24"
-aws_region = "us-east-1"
-bucket_name = "kevinw-p2"
