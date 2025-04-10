@@ -93,3 +93,9 @@ variable "asg_min_size" {
   description = "Minimum number of instances in ASG"
   type        = number
 }
+
+variable "ssh_public_key" {
+  description = "SSH public key for EC2 instances"
+  type        = string
+  sensitive   = true
+}

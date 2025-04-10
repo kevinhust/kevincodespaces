@@ -88,6 +88,13 @@ resource "aws_autoscaling_group" "asg" {
     propagate_at_launch = true
   }
 
+  # Add Ansible group tag
+  tag {
+    key                 = "ansible_group"
+    value              = "webservers"
+    propagate_at_launch = true
+  }
+
   dynamic "tag" {
     for_each = var.common_tags
     content {

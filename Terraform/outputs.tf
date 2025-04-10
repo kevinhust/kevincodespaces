@@ -27,3 +27,21 @@ output "bastion_security_group_id" {
   description = "ID of the bastion security group"
   value       = module.network.bastion_security_group_id
 }
+
+output "webserver_instances" {
+  description = "Public IPs and other details of the webserver instances"
+  value = {
+    asg_name = module.webserver.asg_name
+    key_name = aws_key_pair.zombie_key.key_name
+    security_group_id = module.network.web_security_group_id
+  }
+}
+
+output "vpc_info" {
+  description = "VPC related information"
+  value = {
+    vpc_id = module.network.vpc_id
+    public_subnet_ids = module.network.public_subnet_ids
+    private_subnet_ids = module.network.private_subnet_ids
+  }
+}
