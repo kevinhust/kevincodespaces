@@ -1,152 +1,102 @@
-# Stock Analysis System
+# The Zombies of ACS730 - AWS Infrastructure Project
 
-## 1. Project Overview
-### 1.1 Original Goal
-Build a real-time data processing pipeline using AWS Kinesis, DynamoDB, and Python to ingest, process, and store real-time data streams.
+## Overview
+This project implements a scalable web application infrastructure on AWS using Terraform. The infrastructure includes a multi-tier architecture with public and private subnets, load balancing, auto-scaling, and secure access through a bastion host.
 
-### 1.2 Refined Goal
-To build an intelligent stock analysis system that leverages real-time and historical data to provide accurate stock price predictions, assisting investors in making informed decisions. The system automates data processing and analysis, utilizes advanced machine learning models for predictions, and ensures efficient storage and access to the results.
+## Architecture
+The infrastructure consists of:
+- 4 public subnets across 4 availability zones
+- 2 private subnets across 2 availability zones
+- 1 Bastion host for secure access
+- 4 public web servers
+- 2 private web servers
+- 1 Application Load Balancer
+- 1 Auto Scaling Group
+- 1 NAT Gateway for private subnet internet access
+- 1 Internet Gateway for public subnet internet access
 
-**Project Value Proposition:** Empower investors with more accurate investment decisions, reduce risk, and enhance investment returns.
+## Prerequisites
+- AWS Account with appropriate permissions
+- AWS CLI configured with credentials
+- Terraform installed (version >= 1.0.0)
+- SSH key pair (will be created during setup)
 
-## 2. System Architecture
-### 2.1 Data Flow Architecture
-```mermaid
-graph TD;
-    subgraph Real-Time Data Analysis Flow
-        A[Stock API Data] -->|Pushes real-time stock data| B[Stream Data Storage];
-        B -->|Triggers| C[Serverless Function A: Lambda];
-        C -->|Calculates technical indicators & Invokes Prediction| D[Machine Learning Predict Model: SageMaker Endpoint];
-        D -->|Returns prediction result| C;
-        C -->|Writes processed data| F[No-SQL DB: DynamoDB];
-        F -->|Queries data| G[Visualization: QuickSight];
-        G -->|Displays predictions| G;
-    end
+## Installation
+1. Clone the repository:
+   ```bash
+   git clone https://github.com/MariaVSoto/TheZombiesofACS730.git
+   cd TheZombiesofACS730
+   ```
 
-    subgraph Model Training Flow
-        I[Object Storage: S3] -->|Provides historical stock data| J[Serverless Function B: Lambda];
-        J -->|Triggers training job| K[Machine Learning Training Job: SageMaker];
-        K -->|Stores trained model| I;
-        I -->|Deploys model| D;
-    end
-```
+2. Configure AWS credentials:
+   ```bash
+   aws configure
+   ```
 
-### 2.2 Infrastructure Components
-#### 2.2.1 Network Infrastructure
-- VPC with public and private subnets
+3. Initialize Terraform:
+   ```bash
+   cd Terraform
+   terraform init
+   ```
+
+4. Update `terraform.tfvars` with your specific values:
+   - Replace `ami_id` with your desired AMI ID
+   - Set `bastion_ip` to your IP address
+   - Configure `s3_bucket_name` for your S3 bucket
+
+5. Apply the Terraform configuration:
+   ```bash
+   terraform apply
+   ```
+
+## Infrastructure Components
+
+### Network
+- VPC with CIDR block 10.1.0.0/16
+- Public subnets (10.1.1.0/24 to 10.1.4.0/24)
+- Private subnets (10.1.5.0/24 and 10.1.6.0/24)
+- Internet Gateway for public subnet access
 - NAT Gateway for private subnet internet access
-- Security Groups for ECS tasks
 
-#### 2.2.2 Core Services
-- Amazon ECS Cluster (Fargate)
-- Kinesis Data Stream
-- Lambda Functions
-- DynamoDB Table
-- S3 Bucket
-- SageMaker Endpoint
-- IAM Roles and Policies
+### Security
+- Security groups for web servers, bastion host, and private instances
+- SSH access restricted to bastion host
+- Bastion host access restricted to specified IP address
+- IAM roles and policies for S3 access
 
-## 3. Development Phases
-### 3.1 Phase 1: Core Functionality Validation
-- Single stock analysis (TSLA)
-- End-to-end data flow validation
-- Basic visualization with QuickSight
+### Compute
+- EC2 instances for web servers and bastion host
+- Auto Scaling Group for web servers
+- Application Load Balancer for traffic distribution
 
-### 3.2 Phase 2: Multi-Stock Support
-- Multi-stock data processing
-- Real-time price alerts via SNS
-- Scheduled model training (3-day intervals)
+### Storage
+- S3 bucket for static content
+- IAM roles for S3 access
 
-### 3.3 Phase 3: System Enhancement
-- Model training portal
-- Performance optimization
-- Enhanced visualization
+## Accessing the Infrastructure
+1. Connect to the bastion host:
+   ```bash
+   ssh -i zombie_key ec2-user@<bastion_public_ip>
+   ```
 
-## 4. Setup and Deployment
-### 4.1 Prerequisites
-- AWS Account
-- Terraform >= 1.0
-- AWS CLI configured
-- Docker
-- Python 3.9+
+2. From the bastion host, connect to private instances:
+   ```bash
+   ssh -i zombie_key ec2-user@<private_instance_ip>
+   ```
 
-### 4.2 Repository Structure
-```
-.
-├── README.md
-├── network/
-│   ├── config.tf
-│   ├── main.tf
-│   ├── outputs.tf
-│   └── variables.tf
-├── services/
-│   ├── config.tf
-│   ├── main.tf
-│   ├── outputs.tf
-│   └── variables.tf
-├── lambda_function.zip
-└── ta_lib_layer.zip
-```
+## Maintenance
+- Monitor the Auto Scaling Group through AWS Console
+- Check ALB health checks for instance status
+- Use CloudWatch for monitoring and logging
 
-### 4.3 Deployment Steps
-1. Network Infrastructure:
+## Cleanup
+To destroy the infrastructure:
 ```bash
-cd network
-terraform init
-terraform plan
-terraform apply
-```
-
-2. Services Deployment:
-```bash
-cd ../services
-terraform init
-terraform plan
-terraform apply
-```
-
-3. Post-Deployment Configuration:
-   - Configure Docker image for data collection
-   - Upload historical data to S3
-   - Deploy SageMaker model
-   - Set up QuickSight dashboard
-
-## 5. Monitoring and Operations
-### 5.1 CloudWatch Monitoring
-- ECS container logs
-- Lambda function logs
-- Performance metrics
-- Custom alerts
-
-### 5.2 Security Measures
-- Private subnet deployment
-- Least privilege IAM roles
-- KMS encryption
-- Security group controls
-
-### 5.3 Cost Optimization
-- Fargate Spot usage
-- DynamoDB on-demand capacity
-- Optimized Lambda configuration
-- Log retention management
-
-## 6. Support and Maintenance
-### 6.1 Cleanup
-```bash
-cd services
-terraform destroy
-cd ../network
 terraform destroy
 ```
 
-### 6.2 Contributing
-1. Fork repository
-2. Create feature branch
-3. Submit pull request
-
-## License
-MIT License
-
-## Contact
-For support or inquiries, please contact:
-- Email: [Your Email]
+## Security Notes
+- Keep the SSH private key secure
+- Regularly rotate SSH keys
+- Monitor security groups and IAM policies
+- Keep AMIs and software up to date
