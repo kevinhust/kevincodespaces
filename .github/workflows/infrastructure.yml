@@ -8,12 +8,18 @@ on:
 
 env:
   AWS_REGION: "us-east-1"
+  TERRAFORM_DIR: "Terraform"
+  ANSIBLE_DIR: "Ansible"
 
 jobs:
   terraform:
     name: Terraform
     runs-on: ubuntu-latest
     environment: production
+
+    defaults:
+      run:
+        working-directory: ${{ env.TERRAFORM_DIR }}
 
     steps:
     - uses: actions/checkout@v2
@@ -29,24 +35,28 @@ jobs:
         aws-region: ${{ env.AWS_REGION }}
 
     - name: Terraform Init
-      run: terraform -chdir=Terraform init
+      run: terraform init
 
     - name: Terraform Format
-      run: terraform -chdir=Terraform fmt -check
+      run: terraform fmt -check
 
     - name: Terraform Plan
       if: github.event_name == 'pull_request'
-      run: terraform -chdir=Terraform plan
+      run: terraform plan -input=false
 
     - name: Terraform Apply
       if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-      run: terraform -chdir=Terraform apply -auto-approve
+      run: terraform apply -auto-approve -input=false
 
   ansible:
     name: Ansible Configuration
     needs: terraform
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+
+    defaults:
+      run:
+        working-directory: ${{ env.ANSIBLE_DIR }}
 
     steps:
     - uses: actions/checkout@v2
@@ -68,23 +78,25 @@ jobs:
         python -m pip install --upgrade pip
         pip install ansible boto3 botocore
 
+    - name: Install Ansible collections
+      run: |
+        ansible-galaxy collection install amazon.aws
+
     - name: Create vault pass file
       run: echo "${{ secrets.ANSIBLE_VAULT_PASSWORD }}" > .vault_pass
 
     - name: Decrypt private key
       run: |
-        echo "${{ secrets.ANSIBLE_PRIVATE_KEY_ENCRYPTED }}" > Terraform/zombie_key.encrypted
-        ansible-vault decrypt --vault-password-file .vault_pass Terraform/zombie_key.encrypted --output Terraform/zombie_key
-        chmod 600 Terraform/zombie_key
+        echo "${{ secrets.ANSIBLE_PRIVATE_KEY_ENCRYPTED }}" > ../Terraform/zombie_key.encrypted
+        ansible-vault decrypt --vault-password-file .vault_pass ../Terraform/zombie_key.encrypted --output ../Terraform/zombie_key
+        chmod 600 ../Terraform/zombie_key
 
     - name: Run Ansible playbook
-      run: |
-        cd ansible
-        ansible-playbook configure_webservers.yml
+      run: ansible-playbook configure_webservers.yml
       env:
         ANSIBLE_HOST_KEY_CHECKING: "False"
 
     - name: Cleanup sensitive files
       if: always()
       run: |
-        rm -f .vault_pass Terraform/zombie_key Terraform/zombie_key.encrypted 
+        rm -f .vault_pass ../Terraform/zombie_key ../Terraform/zombie_key.encrypted 
