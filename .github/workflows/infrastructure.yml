@@ -1,4 +1,4 @@
-name: Infrastructure Deployment
+name: Terraform Infrastructure Test
 
 on:
   push:
@@ -9,7 +9,6 @@ on:
 env:
   AWS_REGION: "us-east-1"
   TERRAFORM_DIR: "Terraform"
-  ANSIBLE_DIR: "Ansible"
 
 jobs:
   terraform:
@@ -34,6 +33,30 @@ jobs:
         aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         aws-region: ${{ env.AWS_REGION }}
 
+    - name: Create Terraform Variables
+      run: |
+        cat > terraform.tfvars <<EOF
+        group_name = "zombie"
+        vpc_cidr = "10.0.0.0/16"
+        public_subnet_1_cidr = "10.0.1.0/24"
+        public_subnet_2_cidr = "10.0.2.0/24"
+        public_subnet_3_cidr = "10.0.3.0/24"
+        public_subnet_4_cidr = "10.0.4.0/24"
+        private_subnet_1_cidr = "10.0.5.0/24"
+        private_subnet_2_cidr = "10.0.6.0/24"
+        availability_zone_1 = "us-east-1a"
+        availability_zone_2 = "us-east-1b"
+        availability_zone_3 = "us-east-1c"
+        availability_zone_4 = "us-east-1d"
+        s3_bucket = "zombies-web-content"
+        ami_id = "${{ secrets.AWS_AMI_ID }}"
+        instance_type = "t2.micro"
+        asg_desired_capacity = 2
+        asg_max_size = 4
+        asg_min_size = 1
+        ssh_public_key = "${{ secrets.SSH_PUBLIC_KEY }}"
+        EOF
+
     - name: Terraform Init
       run: terraform init
 
@@ -46,57 +69,4 @@ jobs:
 
     - name: Terraform Apply
       if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-      run: terraform apply -auto-approve -input=false
-
-  ansible:
-    name: Ansible Configuration
-    needs: terraform
-    runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-
-    defaults:
-      run:
-        working-directory: ${{ env.ANSIBLE_DIR }}
-
-    steps:
-    - uses: actions/checkout@v2
-
-    - name: Configure AWS Credentials
-      uses: aws-actions/configure-aws-credentials@v1
-      with:
-        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-        aws-region: ${{ env.AWS_REGION }}
-
-    - name: Set up Python
-      uses: actions/setup-python@v2
-      with:
-        python-version: '3.x'
-
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install ansible boto3 botocore
-
-    - name: Install Ansible collections
-      run: |
-        ansible-galaxy collection install amazon.aws
-
-    - name: Create vault pass file
-      run: echo "${{ secrets.ANSIBLE_VAULT_PASSWORD }}" > .vault_pass
-
-    - name: Decrypt private key
-      run: |
-        echo "${{ secrets.ANSIBLE_PRIVATE_KEY_ENCRYPTED }}" > ../Terraform/zombie_key.encrypted
-        ansible-vault decrypt --vault-password-file .vault_pass ../Terraform/zombie_key.encrypted --output ../Terraform/zombie_key
-        chmod 600 ../Terraform/zombie_key
-
-    - name: Run Ansible playbook
-      run: ansible-playbook configure_webservers.yml
-      env:
-        ANSIBLE_HOST_KEY_CHECKING: "False"
-
-    - name: Cleanup sensitive files
-      if: always()
-      run: |
-        rm -f .vault_pass ../Terraform/zombie_key ../Terraform/zombie_key.encrypted 
+      run: terraform apply -auto-approve -input=false 
