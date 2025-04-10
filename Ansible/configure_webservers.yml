@@ -1,0 +1,46 @@
+- name: Configure Webserver 3 and 4
+  hosts: webservers
+  become: yes
+  vars:
+    webserver_id: "{{ inventory_hostname_short }}"
+  tasks:
+    - name: Update system packages
+      yum:
+        name: '*'
+        state: latest
+
+    - name: Install Apache and awscli
+      yum:
+        name: "{{ item }}"
+        state: present
+      loop:
+        - httpd
+        - awscli
+
+    - name: Start and enable Apache service
+      systemd:
+        name: httpd
+        state: started
+        enabled: yes
+
+    - name: Check Apache service status
+      command: systemctl status httpd
+      register: httpd_status
+      changed_when: false
+
+    - name: Check connectivity
+      ping:
+
+    - name: Download image from S3
+      command: aws s3 cp s3://acs730fp/webserver{{ webserver_id }}.jpg /var/www/html/webserver{{ webserver_id }}.jpg
+
+    - name: Create webpage
+      copy:
+        content: |
+          <h1>Hello from Webserver {{ webserver_id }}</h1>
+          <p>Team: Zombies</p>
+          <p>Hostname: {{ ansible_hostname }}</p>
+          <p>IP Address: {{ ansible_default_ipv4.address }}</p>
+          <p>Created by Ansible</p>
+          <img src="/webserver{{ webserver_id }}.jpg" alt="Webserver {{ webserver_id }} Image">
+        dest: /var/www/html/index.html
