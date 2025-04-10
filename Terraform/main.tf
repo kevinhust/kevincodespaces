@@ -21,11 +21,14 @@ locals {
 # Key Pair
 resource "aws_key_pair" "zombie_key" {
   key_name   = "zombie_key"
-  public_key = file("${path.module}/zombie_key.pub")
+  public_key = var.ssh_public_key
 
-  tags = merge(local.common_tags, {
-    Name = "${var.group_name}KeyPair"
-  })
+  tags = merge(
+    local.common_tags,
+    {
+      Description = "SSH key for zombie infrastructure"
+    }
+  )
 }
 
 # Network Module
