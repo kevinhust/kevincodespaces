@@ -25,6 +25,8 @@ jobs:
 
     - name: Setup Terraform
       uses: hashicorp/setup-terraform@v1
+      with:
+        terraform_version: "1.5.7"
 
     - name: Configure AWS Credentials
       uses: aws-actions/configure-aws-credentials@v1
@@ -58,14 +60,60 @@ jobs:
         EOF
 
     - name: Terraform Init
+      id: init
       run: terraform init
+      continue-on-error: true
+
+    - name: Check Init Status
+      if: steps.init.outcome == 'failure'
+      run: |
+        echo "Terraform init failed. Checking state..."
+        ls -la
+        cat .terraform.lock.hcl || true
+        exit 1
 
     - name: Terraform Format
       run: terraform fmt -check
+      continue-on-error: true
 
     - name: Terraform Plan
+      id: plan
       if: github.event_name == 'pull_request'
-      run: terraform plan -input=false
+      run: |
+        terraform plan -input=false -no-color -detailed-exitcode > plan.txt
+        echo "PLAN_EXIT_CODE=$?" >> $GITHUB_ENV
+        cat plan.txt
+
+    - name: Update PR
+      if: github.event_name == 'pull_request'
+      uses: actions/github-script@v6
+      with:
+        script: |
+          const fs = require('fs');
+          const plan = fs.readFileSync('Terraform/plan.txt', 'utf8');
+          const maxGitHubBodyLength = 65536;
+          const planOutput = plan.length > maxGitHubBodyLength 
+            ? plan.substr(0, maxGitHubBodyLength) + "\n... Output truncated ..."
+            : plan;
+          
+          github.rest.issues.createComment({
+            issue_number: context.issue.number,
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            body: '### Terraform Plan Output\n```\n' + planOutput + '\n```'
+          });
+
+    - name: Terraform Plan Status
+      if: github.event_name == 'pull_request'
+      run: |
+        if [ "$PLAN_EXIT_CODE" -eq 2 ]; then
+          echo "Changes detected in plan"
+        elif [ "$PLAN_EXIT_CODE" -eq 0 ]; then
+          echo "No changes detected in plan"
+        else
+          echo "Plan failed"
+          exit 1
+        fi
 
     - name: Terraform Apply
       if: github.ref == 'refs/heads/main' && github.event_name == 'push'

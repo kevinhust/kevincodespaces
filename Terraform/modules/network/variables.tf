@@ -27,4 +27,10 @@ variable "private_subnets" {
     cidr = string
     az   = string
   }))
+}
+
+variable "trusted_ips" {
+  description = "List of trusted IP CIDR blocks for SSH access to bastion host"
+  type        = list(string)
+  default     = ["0.0.0.0/0"]
 } 

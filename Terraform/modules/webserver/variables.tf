@@ -56,4 +56,14 @@ variable "target_group_arn" {
 variable "public_subnet_ids" {
   description = "Map of public subnet IDs"
   type        = map(string)
+}
+
+variable "private_subnet_ids" {
+  description = "Map of private subnet IDs"
+  type        = map(string)
+}
+
+variable "private_security_group_id" {
+  description = "ID of the private security group"
+  type        = string
 } 

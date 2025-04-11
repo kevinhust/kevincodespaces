@@ -52,19 +52,43 @@ resource "aws_iam_instance_profile" "web_instance_profile" {
   role = aws_iam_role.web_role.name
 }
 
-# Launch Configuration
-resource "aws_launch_configuration" "launch_config" {
-  name_prefix          = "${var.group_name}-web-"
-  image_id             = var.ami_id
-  instance_type        = var.instance_type
-  security_groups      = [var.web_security_group_id]
-  iam_instance_profile = aws_iam_instance_profile.web_instance_profile.name
-  key_name            = var.key_name
-  user_data           = templatefile("${path.module}/setup_webserver.sh", {
-    WEBSERVER_ID = "asg"
-    GROUP_NAME   = var.group_name
-    S3_BUCKET    = var.s3_bucket
-  })
+# Launch Template
+resource "aws_launch_template" "launch_template" {
+  name_prefix   = "${var.group_name}-web-"
+  image_id      = var.ami_id
+  instance_type = var.instance_type
+
+  vpc_security_group_ids = [var.private_security_group_id]
+
+  iam_instance_profile {
+    name = aws_iam_instance_profile.web_instance_profile.name
+  }
+
+  user_data = base64encode(<<-EOF
+              #!/bin/bash
+              INSTANCE_ID=$(curl -s http://169.254.169.254/latest/meta-data/instance-id)
+              INSTANCE_NUMBER=$(($(echo $INSTANCE_ID | cut -d'-' -f2 | head -c 1) % 5 + 1))
+              export WEBSERVER_ID=$INSTANCE_NUMBER
+              export GROUP_NAME="${var.group_name}"
+              export S3_BUCKET="${var.s3_bucket}"
+              
+              # Set hostname
+              sudo hostnamectl set-hostname ${var.group_name}-webserver-$INSTANCE_NUMBER
+              
+              ${file("${path.module}/setup_webserver.sh")}
+              EOF
+  )
+
+  key_name = var.key_name
+
+  monitoring {
+    enabled = true
+  }
+
+  tag_specifications {
+    resource_type = "instance"
+    tags = var.common_tags
+  }
 
   lifecycle {
     create_before_destroy = true
@@ -78,29 +102,25 @@ resource "aws_autoscaling_group" "asg" {
   max_size            = var.asg_max_size
   min_size            = var.asg_min_size
   target_group_arns   = [var.target_group_arn]
-  vpc_zone_identifier = values(var.public_subnet_ids)
+  vpc_zone_identifier = values(var.private_subnet_ids)
 
-  launch_configuration = aws_launch_configuration.launch_config.name
-
-  tag {
-    key                 = "Name"
-    value              = "${var.group_name}WebServer"
-    propagate_at_launch = true
-  }
-
-  # Add Ansible group tag
-  tag {
-    key                 = "ansible_group"
-    value              = "webservers"
-    propagate_at_launch = true
+  launch_template {
+    id      = aws_launch_template.launch_template.id
+    version = "$Latest"
   }
 
   dynamic "tag" {
     for_each = var.common_tags
     content {
       key                 = tag.key
-      value              = tag.value
+      value               = tag.value
       propagate_at_launch = true
     }
+  }
+
+  tag {
+    key                 = "ansible_group"
+    value              = "webservers"
+    propagate_at_launch = true
   }
 } 

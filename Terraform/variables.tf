@@ -1,6 +1,7 @@
 variable "group_name" {
-  description = "Name of the project group"
+  description = "Name of the group/team"
   type        = string
+  default     = "zombies"
 }
 
 variable "region" {
@@ -12,6 +13,7 @@ variable "region" {
 variable "vpc_cidr" {
   description = "CIDR block for VPC"
   type        = string
+  default     = "10.1.0.0/16"
 }
 
 variable "public_subnet_1_cidr" {
@@ -67,16 +69,18 @@ variable "availability_zone_4" {
 variable "s3_bucket" {
   description = "Name of the S3 bucket for web content"
   type        = string
+  default     = "thezombiesofacs730"
 }
 
 variable "ami_id" {
-  description = "ID of the AMI to use for web servers"
+  description = "AMI ID for EC2 instances"
   type        = string
 }
 
 variable "instance_type" {
-  description = "Instance type for web servers"
+  description = "Instance type for EC2 instances"
   type        = string
+  default     = "t2.small"
 }
 
 variable "asg_desired_capacity" {
@@ -95,7 +99,36 @@ variable "asg_min_size" {
 }
 
 variable "ssh_public_key" {
-  description = "SSH public key for EC2 instances"
+  description = "Public key for SSH access"
   type        = string
-  sensitive   = true
+}
+
+variable "key_name" {
+  description = "Name of the SSH key pair"
+  type        = string
+  default     = "zombies-key"
+}
+
+variable "environment" {
+  description = "Environment name (e.g., dev, staging, prod)"
+  type        = string
+  default     = "dev"
+}
+
+variable "cost_center" {
+  description = "Cost center for billing purposes"
+  type        = string
+  default     = "acs730-project"
+}
+
+variable "owner" {
+  description = "Owner of the resources"
+  type        = string
+  default     = "zombies-team"
+}
+
+variable "managed_by" {
+  description = "Tool managing the resources"
+  type        = string
+  default     = "terraform"
 }

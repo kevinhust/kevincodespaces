@@ -4,3 +4,17 @@
 *.tfstate.*
 .terraform/
 .terraform.lock.hcl
+
+# Ansible
+*.retry
+.vault_pass
+*.encrypted
+
+# SSH Keys
+*_key
+*_key.pub
+*.pem
+
+# OS
+.DS_Store
+.env
