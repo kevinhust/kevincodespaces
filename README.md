@@ -1,152 +1,113 @@
-# Stock Analysis System
+# Zombies Team - ACS730 Project
 
-## 1. Project Overview
-### 1.1 Original Goal
-Build a real-time data processing pipeline using AWS Kinesis, DynamoDB, and Python to ingest, process, and store real-time data streams.
+This is the final project for ACS730 course, completed by the Zombies team (Kevin, Shruti, and Maria). The project implements a two-tier web application on AWS, automated with Terraform and Ansible deployment.
 
-### 1.2 Refined Goal
-To build an intelligent stock analysis system that leverages real-time and historical data to provide accurate stock price predictions, assisting investors in making informed decisions. The system automates data processing and analysis, utilizes advanced machine learning models for predictions, and ensures efficient storage and access to the results.
+## Team Members
 
-**Project Value Proposition:** Empower investors with more accurate investment decisions, reduce risk, and enhance investment returns.
+- Kevin (GitHub: `kevinhust`)
+- Shruti (GitHub: `Shrutii-30`)
+- Maria (GitHub: `MariaVSoto`)
 
-## 2. System Architecture
-### 2.1 Data Flow Architecture
-```mermaid
-graph TD;
-    subgraph Real-Time Data Analysis Flow
-        A[Stock API Data] -->|Pushes real-time stock data| B[Stream Data Storage];
-        B -->|Triggers| C[Serverless Function A: Lambda];
-        C -->|Calculates technical indicators & Invokes Prediction| D[Machine Learning Predict Model: SageMaker Endpoint];
-        D -->|Returns prediction result| C;
-        C -->|Writes processed data| F[No-SQL DB: DynamoDB];
-        F -->|Queries data| G[Visualization: QuickSight];
-        G -->|Displays predictions| G;
-    end
+## Architecture
 
-    subgraph Model Training Flow
-        I[Object Storage: S3] -->|Provides historical stock data| J[Serverless Function B: Lambda];
-        J -->|Triggers training job| K[Machine Learning Training Job: SageMaker];
-        K -->|Stores trained model| I;
-        I -->|Deploys model| D;
-    end
-```
+- **Infrastructure**:
+  - VPC (CIDR: 10.1.0.0/16)
+  - 4 public subnets and 2 private subnets
+  - 6 EC2 instances (5 web servers, 1 SSH test VM)
+  - Application Load Balancer (ALB)
+  - Auto Scaling Group (ASG)
+  - NAT Gateway
 
-### 2.2 Infrastructure Components
-#### 2.2.1 Network Infrastructure
-- VPC with public and private subnets
-- NAT Gateway for private subnet internet access
-- Security Groups for ECS tasks
+- **Security Groups**:
+  - ALB Security Group: Allows HTTP (80) from internet
+  - Web Security Group: Allows HTTP (80) from ALB, SSH (22) from Bastion
+  - Bastion Security Group: Allows SSH (22) from trusted IPs
+  - Private Security Group: Allows SSH (22) from Bastion, HTTP (80) from Web servers
 
-#### 2.2.2 Core Services
-- Amazon ECS Cluster (Fargate)
-- Kinesis Data Stream
-- Lambda Functions
-- DynamoDB Table
-- S3 Bucket
-- SageMaker Endpoint
-- IAM Roles and Policies
+- **Web Servers**:
+  - Webserver 1: Public Subnet 1, in ALB/ASG
+  - Webserver 2: Public Subnet 2, Bastion Host
+  - Webserver 3: Public Subnet 3, in ALB/ASG
+  - Webserver 4: Public Subnet 4, configured by Ansible
+  - Webserver 5: Private Subnet 1, configured by Ansible
+  - Webserver 6: Private Subnet 2, SSH test only
 
-## 3. Development Phases
-### 3.1 Phase 1: Core Functionality Validation
-- Single stock analysis (TSLA)
-- End-to-end data flow validation
-- Basic visualization with QuickSight
+## Prerequisites
 
-### 3.2 Phase 2: Multi-Stock Support
-- Multi-stock data processing
-- Real-time price alerts via SNS
-- Scheduled model training (3-day intervals)
+1. Create S3 bucket:
+   ```bash
+   aws s3 mb s3://thezombiesofacs730
+   ```
 
-### 3.3 Phase 3: System Enhancement
-- Model training portal
-- Performance optimization
-- Enhanced visualization
+2. Upload website images:
+   ```bash
+   aws s3 cp webserver1.jpg s3://thezombiesofacs730/web-content/
+   aws s3 cp webserver2.jpg s3://thezombiesofacs730/web-content/
+   aws s3 cp webserver3.jpg s3://thezombiesofacs730/web-content/
+   aws s3 cp webserver4.jpg s3://thezombiesofacs730/web-content/
+   aws s3 cp webserver5.jpg s3://thezombiesofacs730/web-content/
+   ```
 
-## 4. Setup and Deployment
-### 4.1 Prerequisites
-- AWS Account
-- Terraform >= 1.0
-- AWS CLI configured
-- Docker
-- Python 3.9+
+3. Create SSH key pair:
+   ```bash
+   ssh-keygen -t rsa -b 2048 -f zombieacs730
+   chmod 400 zombieacs730
+   ```
 
-### 4.2 Repository Structure
-```
-.
-├── README.md
-├── network/
-│   ├── config.tf
-│   ├── main.tf
-│   ├── outputs.tf
-│   └── variables.tf
-├── services/
-│   ├── config.tf
-│   ├── main.tf
-│   ├── outputs.tf
-│   └── variables.tf
-├── lambda_function.zip
-└── ta_lib_layer.zip
-```
+## Security Configuration
 
-### 4.3 Deployment Steps
-1. Network Infrastructure:
-```bash
-cd network
-terraform init
-terraform plan
-terraform apply
-```
+1. Update trusted IPs (Optional):
+   Edit `Terraform/terraform.tfvars` to specify trusted IP ranges for SSH access:
+   ```hcl
+   trusted_ips = ["YOUR_IP/32", "OFFICE_NETWORK/24"]
+   ```
 
-2. Services Deployment:
-```bash
-cd ../services
-terraform init
-terraform plan
-terraform apply
-```
+2. Security Group Access:
+   - Internet → ALB (HTTP 80)
+   - ALB → Web Servers (HTTP 80)
+   - Trusted IPs → Bastion (SSH 22)
+   - Bastion → Web/Private Servers (SSH 22)
+   - Web Servers → Private Servers (HTTP 80)
 
-3. Post-Deployment Configuration:
-   - Configure Docker image for data collection
-   - Upload historical data to S3
-   - Deploy SageMaker model
-   - Set up QuickSight dashboard
+## Deployment Steps
 
-## 5. Monitoring and Operations
-### 5.1 CloudWatch Monitoring
-- ECS container logs
-- Lambda function logs
-- Performance metrics
-- Custom alerts
+1. Initialize Terraform:
+   ```bash
+   terraform init
+   ```
 
-### 5.2 Security Measures
-- Private subnet deployment
-- Least privilege IAM roles
-- KMS encryption
-- Security group controls
+2. Review the deployment plan:
+   ```bash
+   terraform plan
+   ```
 
-### 5.3 Cost Optimization
-- Fargate Spot usage
-- DynamoDB on-demand capacity
-- Optimized Lambda configuration
-- Log retention management
+3. Apply the configuration:
+   ```bash
+   terraform apply
+   ```
 
-## 6. Support and Maintenance
-### 6.1 Cleanup
-```bash
-cd services
-terraform destroy
-cd ../network
-terraform destroy
-```
+4. Wait for deployment to complete, then access the ALB DNS name from the outputs.
 
-### 6.2 Contributing
-1. Fork repository
-2. Create feature branch
-3. Submit pull request
+## Cleanup
 
-## License
-MIT License
+To remove all resources:
 
-## Contact
-For support or inquiries, please contact:
-- Email: [Your Email]
+1. Destroy Terraform resources:
+   ```bash
+   terraform destroy
+   ```
+
+2. Delete S3 bucket:
+   ```bash
+   aws s3 rm s3://thezombiesofacs730 --recursive
+   aws s3 rb s3://thezombiesofacs730
+   ```
+
+## Notes
+
+- All resources are deployed in the us-east-1 region
+- Using t2.small instance type
+- ASG configuration: minimum 2 instances, maximum 4 instances
+- Bastion host (Webserver 2) is used to access instances in private subnets
+- Security groups are configured with least privilege access
+- Default trusted IPs is set to 0.0.0.0/0 (all IPs) - should be restricted in production

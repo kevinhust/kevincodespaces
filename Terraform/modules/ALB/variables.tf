@@ -14,11 +14,16 @@ variable "web_security_group_id" {
 }
 
 variable "public_subnet_ids" {
-  description = "Map of public subnet IDs"
-  type        = map(string)
+  description = "List of public subnet IDs"
+  type        = list(string)
 }
 
 variable "vpc_id" {
   description = "ID of the VPC"
+  type        = string
+}
+
+variable "s3_bucket" {
+  description = "S3 bucket for ALB access logs"
   type        = string
 } 

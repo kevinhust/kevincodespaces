@@ -1,0 +1,120 @@
+name: Terraform Infrastructure Test
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  AWS_REGION: "us-east-1"
+  TERRAFORM_DIR: "Terraform"
+
+jobs:
+  terraform:
+    name: Terraform
+    runs-on: ubuntu-latest
+    environment: production
+
+    defaults:
+      run:
+        working-directory: ${{ env.TERRAFORM_DIR }}
+
+    steps:
+    - uses: actions/checkout@v2
+
+    - name: Setup Terraform
+      uses: hashicorp/setup-terraform@v1
+      with:
+        terraform_version: "1.5.7"
+
+    - name: Configure AWS Credentials
+      uses: aws-actions/configure-aws-credentials@v1
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ env.AWS_REGION }}
+
+    - name: Create Terraform Variables
+      run: |
+        cat > terraform.tfvars <<EOF
+        group_name = "zombie"
+        vpc_cidr = "10.0.0.0/16"
+        public_subnet_1_cidr = "10.0.1.0/24"
+        public_subnet_2_cidr = "10.0.2.0/24"
+        public_subnet_3_cidr = "10.0.3.0/24"
+        public_subnet_4_cidr = "10.0.4.0/24"
+        private_subnet_1_cidr = "10.0.5.0/24"
+        private_subnet_2_cidr = "10.0.6.0/24"
+        availability_zone_1 = "us-east-1a"
+        availability_zone_2 = "us-east-1b"
+        availability_zone_3 = "us-east-1c"
+        availability_zone_4 = "us-east-1d"
+        s3_bucket = "zombies-web-content"
+        ami_id = "${{ secrets.AWS_AMI_ID }}"
+        instance_type = "t2.micro"
+        asg_desired_capacity = 2
+        asg_max_size = 4
+        asg_min_size = 1
+        ssh_public_key = "${{ secrets.SSH_PUBLIC_KEY }}"
+        EOF
+
+    - name: Terraform Init
+      id: init
+      run: terraform init
+      continue-on-error: true
+
+    - name: Check Init Status
+      if: steps.init.outcome == 'failure'
+      run: |
+        echo "Terraform init failed. Checking state..."
+        ls -la
+        cat .terraform.lock.hcl || true
+        exit 1
+
+    - name: Terraform Format
+      run: terraform fmt -check
+      continue-on-error: true
+
+    - name: Terraform Plan
+      id: plan
+      if: github.event_name == 'pull_request'
+      run: |
+        terraform plan -input=false -no-color -detailed-exitcode > plan.txt
+        echo "PLAN_EXIT_CODE=$?" >> $GITHUB_ENV
+        cat plan.txt
+
+    - name: Update PR
+      if: github.event_name == 'pull_request'
+      uses: actions/github-script@v6
+      with:
+        script: |
+          const fs = require('fs');
+          const plan = fs.readFileSync('Terraform/plan.txt', 'utf8');
+          const maxGitHubBodyLength = 65536;
+          const planOutput = plan.length > maxGitHubBodyLength 
+            ? plan.substr(0, maxGitHubBodyLength) + "\n... Output truncated ..."
+            : plan;
+          
+          github.rest.issues.createComment({
+            issue_number: context.issue.number,
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            body: '### Terraform Plan Output\n```\n' + planOutput + '\n```'
+          });
+
+    - name: Terraform Plan Status
+      if: github.event_name == 'pull_request'
+      run: |
+        if [ "$PLAN_EXIT_CODE" -eq 2 ]; then
+          echo "Changes detected in plan"
+        elif [ "$PLAN_EXIT_CODE" -eq 0 ]; then
+          echo "No changes detected in plan"
+        else
+          echo "Plan failed"
+          exit 1
+        fi
+
+    - name: Terraform Apply
+      if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+      run: terraform apply -auto-approve -input=false 
